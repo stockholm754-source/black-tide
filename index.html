@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>黑潮防线 · 网页版</title>
+<link rel="shortcut icon" href="TemplateData/favicon.ico">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: #04070a; overflow: hidden; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    color: #cfe6e8; -webkit-font-smoothing: antialiased;
+  }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas {
+    display: block; background: #000; outline: none;
+    box-shadow: 0 0 0 1px rgba(90, 210, 210, .18), 0 24px 80px rgba(0, 0, 0, .8);
+  }
+  #loading {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 26px;
+    background:
+      radial-gradient(1200px 700px at 50% 42%, rgba(20, 110, 112, .30), rgba(4, 7, 10, 0) 62%),
+      radial-gradient(600px 400px at 50% 100%, rgba(12, 70, 80, .25), rgba(4, 7, 10, 0) 70%),
+      #04070a;
+    transition: opacity .6s ease; z-index: 10;
+  }
+  #loading.done { opacity: 0; pointer-events: none; }
+  .logo {
+    font-size: 44px; letter-spacing: .42em; text-indent: .42em; font-weight: 600;
+    color: #eafcff; text-shadow: 0 0 24px rgba(64, 220, 220, .55), 0 0 60px rgba(32, 160, 170, .35);
+  }
+  .sub { margin-top: -12px; font-size: 12px; letter-spacing: .5em; text-indent: .5em; color: #6fb9bf; }
+  .tag { font-size: 13px; color: #8fd6da; letter-spacing: .14em; }
+  .bar { width: min(420px, 74vw); height: 3px; background: rgba(120, 220, 220, .14); border-radius: 3px; overflow: hidden; }
+  .fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2ad4c8, #7ef2ff); box-shadow: 0 0 12px rgba(80, 235, 235, .8); transition: width .2s linear; }
+  .status { font-size: 12px; color: #6ea3a8; letter-spacing: .08em; min-height: 16px; font-variant-numeric: tabular-nums; }
+  .hint { position: fixed; bottom: 26px; width: 100%; text-align: center; font-size: 11.5px; color: #4c6e73; letter-spacing: .06em; line-height: 1.9; }
+  #warning { position: fixed; top: 0; left: 0; right: 0; z-index: 30; }
+  #fs {
+    position: fixed; right: 14px; bottom: 12px; z-index: 20; display: none;
+    padding: 7px 12px; font-size: 12px; letter-spacing: .1em; color: #9fe8ec; cursor: pointer;
+    background: rgba(10, 30, 34, .7); border: 1px solid rgba(90, 210, 210, .35); border-radius: 3px;
+  }
+  #fs:hover { background: rgba(20, 60, 66, .9); }
+  #err { position: fixed; inset: 0; display: none; z-index: 40; background: #0a0d10; color: #d8b6b6;
+         padding: 40px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow: auto; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="unity-canvas" width="1280" height="720" tabindex="-1"></canvas></div>
+
+<div id="loading">
+  <div class="logo">黑潮防线</div>
+  <div class="sub">BLACK TIDE · DEFENSE LINE</div>
+  <div class="tag">3D 三人共斗 · Roguelike PVE · 网页版</div>
+  <div class="bar"><div class="fill" id="fill"></div></div>
+  <div class="status" id="status">正在准备…</div>
+</div>
+
+<div class="hint">
+  首次进入需要下载约 130 MB 资源，建议 Chrome / Edge 桌面版全屏游玩<br>
+  WASD 移动 · 鼠标左键普攻 · 空格闪避 · E 技能 · Q 大招 · R 声骸 · Tab 换人 · H 教学
+</div>
+
+<div id="warning"></div>
+<div id="fs">全屏</div>
+<div id="err"></div>
+
+<script>
+(function () {
+  var DATA_PARTS = ["Build/blacktide.data.unityweb.part0", "Build/blacktide.data.unityweb.part1"];
+  var DATA_TOTAL = 136528612;
+
+  var canvas = document.getElementById("unity-canvas");
+  var loading = document.getElementById("loading");
+  var fill = document.getElementById("fill");
+  var statusEl = document.getElementById("status");
+  var fsBtn = document.getElementById("fs");
+  var errEl = document.getElementById("err");
+  var warning = document.getElementById("warning");
+
+  function fail(msg) {
+    errEl.style.display = "block";
+    errEl.textContent = "加载失败：\n" + msg + "\n\n请刷新页面重试；若反复失败，请换用 Chrome / Edge 桌面版。";
+    loading.classList.add("done");
+  }
+
+  function showBanner(msg, type) {
+    var div = document.createElement("div");
+    div.innerHTML = msg;
+    div.style.cssText = "padding:10px 14px;font-size:12px;" +
+      (type === "error" ? "background:#8c1d1d;color:#fff;" : "background:#8a7a1a;color:#fff;");
+    warning.appendChild(div);
+    if (type !== "error") setTimeout(function () { warning.removeChild(div); }, 5000);
+  }
+
+  function fitCanvas() {
+    var w = window.innerWidth, h = window.innerHeight;
+    var s = Math.min(w / 16, h / 9);
+    canvas.style.width = Math.floor(s * 16) + "px";
+    canvas.style.height = Math.floor(s * 9) + "px";
+  }
+  window.addEventListener("resize", fitCanvas);
+  fitCanvas();
+
+  function setProgress(frac, text) {
+    fill.style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
+    if (text) statusEl.textContent = text;
+  }
+
+  async function gatherData() {
+    var blobs = [];
+    var loaded = 0;
+    for (var i = 0; i < DATA_PARTS.length; i++) {
+      var res = await fetch(DATA_PARTS[i], { cache: "force-cache" });
+      if (!res.ok) throw new Error(DATA_PARTS[i] + " 下载失败 HTTP " + res.status);
+      if (!res.body) {
+        var ab = await res.arrayBuffer();
+        blobs.push(new Blob([ab]));
+        loaded += ab.byteLength;
+        continue;
+      }
+      var reader = res.body.getReader();
+      var chunks = [];
+      while (true) {
+        var step = await reader.read();
+        if (step.done) break;
+        chunks.push(step.value);
+        loaded += step.value.length;
+        setProgress(loaded / DATA_TOTAL, "正在下载资源 " + Math.round(loaded / DATA_TOTAL * 100) + "%  ·  " +
+          (loaded / 1048576).toFixed(1) + " / " + (DATA_TOTAL / 1048576).toFixed(1) + " MB");
+      }
+      blobs.push(new Blob(chunks));
+    }
+    return URL.createObjectURL(new Blob(blobs, { type: "application/octet-stream" }));
+  }
+
+  (async function () {
+    var dataUrl;
+    try {
+      setProgress(0, "正在下载资源 0%");
+      dataUrl = await gatherData();
+    } catch (e) { fail(e.message || e); return; }
+
+    setProgress(0.99, "正在初始化引擎…");
+    var loader = document.createElement("script");
+    loader.src = "Build/blacktide.loader.js";
+    loader.onload = function () {
+      createTuanjieInstance(canvas, {
+        dataUrl: dataUrl,
+        frameworkUrl: "Build/blacktide.framework.js.unityweb",
+        codeUrl: "Build/blacktide.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "Stockholm",
+        productName: "黑潮防线",
+        productVersion: "1.0",
+        showBanner: showBanner
+      }, function (progress) {
+        setProgress(progress, "正在初始化引擎 " + Math.round(progress * 100) + "%");
+      }).then(function (instance) {
+        setProgress(1, "进入游戏");
+        loading.classList.add("done");
+        document.querySelector(".hint").style.display = "none";
+        fsBtn.style.display = "block";
+        fsBtn.onclick = function () { instance.SetFullscreen(1); };
+        canvas.focus();
+      }).catch(function (message) { fail(message); });
+    };
+    loader.onerror = function () { fail("loader.js 加载失败"); };
+    document.body.appendChild(loader);
+  })();
+})();
+</script>
+</body>
+</html>
